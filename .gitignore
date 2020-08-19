@@ -1,0 +1,9 @@
+target/
+.idea/
+.DS_Store
+*.trace.db
+.vscode/
+.bloop/
+.metals/
+example.mv.db
+example.trace.db
