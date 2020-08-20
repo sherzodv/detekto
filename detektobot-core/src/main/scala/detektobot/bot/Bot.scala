@@ -78,9 +78,9 @@ class Bot[F[_]: Api: ConcurrentEffect: Timer: LogIO](
 
   private def onPhoto(photo: PhotoSize, msg: Message): F[Unit] = {
     val defaultReq = mkDmCheckReq(photo, msg)
-    OptionT(getFile(photo.fileId).exec.map(_.filePath))
-      .getOrElseF(new RuntimeException("Файл не найден").raiseError[F, String])
-      .flatMap(readCodeAndDecode)
+    OptionT(getFile(photo.fileId).exec.map(x => x.filePath.map(x.fileUniqueId -> _)))
+      .getOrElseF(new RuntimeException("Файл не найден").raiseError)
+      .flatMap{ case (id, path) => readCodeAndDecode(id, path) }
       .flatMap(code => dmCodeRepo.checkDmCode(defaultReq.copy(code = Some(code))).map(x => (x, code)))
       .flatMap{ case (checkResult, code) =>
         checkResult.fold(
@@ -144,12 +144,12 @@ class Bot[F[_]: Api: ConcurrentEffect: Timer: LogIO](
       }
   }
 
-  private def readCodeAndDecode(path: String): F[String] = {
+  private def readCodeAndDecode(id: String, path: String): F[String] = {
     http
       .get(s"https://api.telegram.org/file/bot$token/$path") { res =>
         res.body
           .through(toInputStream)
-          .evalMap(decodeDmCode)
+          .evalMap(decodeDmCode(id, _))
           .compile
           .toList
           .map(_.head)
@@ -166,11 +166,11 @@ class Bot[F[_]: Api: ConcurrentEffect: Timer: LogIO](
     Pack(code = packCode, blocks = blocks)
   }
 
-  private def decodeDmCode(is: InputStream) = F.delay {
+  private def decodeDmCode(id: String, is: InputStream) = F.delay {
     import scala.jdk.CollectionConverters._
     val img = ImageIO.read(is)
     val bin = new BinaryBitmap(new GlobalHistogramBinarizer(new BufferedImageLuminanceSource(img)))
-    ImageIO.write(MatrixToImageWriter.toBufferedImage(bin.getBlackMatrix), "jpg", new java.io.File("/home/sherzod/temp/dmresult/img.jpg"))
+    ImageIO.write(MatrixToImageWriter.toBufferedImage(bin.getBlackMatrix), "jpg", new java.io.File(s"${conf.admin.storage}/$id.jpg"))
     val hints = new java.util.HashMap[DecodeHintType, Any]()
     hints.put(DecodeHintType.TRY_HARDER, ())
     hints.put(DecodeHintType.POSSIBLE_FORMATS, List(BarcodeFormat.DATA_MATRIX).asJava)

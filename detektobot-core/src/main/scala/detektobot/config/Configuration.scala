@@ -5,7 +5,7 @@ import doobie.hikari.HikariTransactor
 
 import scala.concurrent.ExecutionContext
 
-final case class AdminConf(admins: List[Int])
+final case class AdminConf(admins: List[Int], storage: String)
 final case class HttpClientConf(opt: String)
 final case class HttpConf(host: String, port: Int, path: String, timeout: Int, client: HttpClientConf)
 final case class DbPoolConf(poolSize: Int)
