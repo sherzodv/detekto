@@ -5,6 +5,7 @@ import doobie.hikari.HikariTransactor
 
 import scala.concurrent.ExecutionContext
 
+final case class BotConf(token: String)
 final case class AdminConf(admins: List[Int], storage: String)
 final case class HttpClientConf(opt: String)
 final case class HttpConf(host: String, port: Int, path: String, timeout: Int, client: HttpClientConf)
@@ -17,7 +18,7 @@ final case class ApiConfLimits(
   maxCodesHourMsisdn: Int,
   minMinutesBetweenCodesMsisdn: Int,
 )
-final case class Conf(admin: AdminConf, db: DbConf, http: HttpConf, api: ApiConf)
+final case class Conf(bot: BotConf, admin: AdminConf, db: DbConf, http: HttpConf, api: ApiConf)
 
 object DbConf {
 

@@ -26,7 +26,6 @@ import org.http4s.client.Client
 
 class Bot[F[_]: Api: ConcurrentEffect: Timer: LogIO](
   http: Client[F],
-  token: String,
   conf: Conf,
   dmCodeRepo: Repo.Service[F],
 ) extends LongPollBot[F](implicitly[Api[F]]) {
@@ -73,7 +72,44 @@ class Bot[F[_]: Api: ConcurrentEffect: Timer: LogIO](
 
   private def onCommand(cmd: String, msg: Message): F[Unit] = {
     val defaultReq = mkCommandReq(cmd, msg)
-    dmCodeRepo.registerCmd(defaultReq)
+    val checkCodeReq = DmCodeCheckReq(
+      userId        = msg.from.map(_.id).getOrElse(-1),
+      userName      = msg.from.flatMap(_.username),
+      userFirstName = msg.from.map(_.firstName),
+      userLastName  = msg.from.flatMap(_.lastName),
+      text          = msg.text,
+      fileId        = "",
+      fileUniqueId  = "",
+      code          = Some(cmd),
+      error         = None,
+    )
+    dmCodeRepo.registerCmd(defaultReq) *> (
+      if (cmd.startsWith("/") || cmd.length < 40) {
+        sendMessage(
+          ChatIntId(msg.chat.id),
+          "Неверный формат кода",
+        ).exec.void
+      } else {
+        dmCodeRepo.checkDmCode(checkCodeReq).map(x => (x, cmd))
+          .flatMap{ case (checkResult, code) =>
+            checkResult.fold(
+              sendMessage(
+                ChatIntId(msg.chat.id),
+                s"""
+                   |Блок не найден в базе: $code
+                   |""".stripMargin
+              ).exec.void
+            )(packCode => sendMessage(
+              ChatIntId(msg.chat.id),
+              s"""
+                 |Блок найден: $code
+                 |Пакет: $packCode
+                 |""".stripMargin
+            ).exec.void)
+          }
+          .void
+      }
+    )
   }
 
   private def onPhoto(photo: PhotoSize, msg: Message): F[Unit] = {
@@ -134,7 +170,7 @@ class Bot[F[_]: Api: ConcurrentEffect: Timer: LogIO](
 
   private def readPackAndParse(path: String): F[Pack] = {
     http
-      .get(s"https://api.telegram.org/file/bot$token/$path") { res =>
+      .get(s"https://api.telegram.org/file/bot${conf.bot.token}/$path") { res =>
         res.body
           .through(toInputStream)
           .evalMap(parsePack)
@@ -146,7 +182,7 @@ class Bot[F[_]: Api: ConcurrentEffect: Timer: LogIO](
 
   private def readCodeAndDecode(id: String, path: String): F[String] = {
     http
-      .get(s"https://api.telegram.org/file/bot$token/$path") { res =>
+      .get(s"https://api.telegram.org/file/bot${conf.bot.token}/$path") { res =>
         res.body
           .through(toInputStream)
           .evalMap(decodeDmCode(id, _))

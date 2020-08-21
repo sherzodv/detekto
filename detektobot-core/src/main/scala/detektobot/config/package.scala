@@ -4,6 +4,7 @@ import io.circe.Decoder
 import io.circe.generic.semiauto.deriveDecoder
 
 package object config {
+  implicit val botConfDecoder: Decoder[BotConf] = deriveDecoder
   implicit val adminDecoder: Decoder[AdminConf] = deriveDecoder
   implicit val httpConfDecoder: Decoder[HttpConf] = deriveDecoder
   implicit val httpClientConf: Decoder[HttpClientConf] = deriveDecoder
