@@ -29,7 +29,13 @@ object Repo {
 
     def checkDmCode(req: DmCodeCheckReq): F[Option[String]] = {
       insertCodeCheckReq(req).run.transact(tx) *>
-        req.code.fold(F.pure[Option[String]](None))(code => selectPackByBlockCode(code).option.transact(tx))
+        req.code.fold(F.pure[Option[String]](None))(code => {
+          if (code.length == 41) {
+            selectPackByBlockCode(code).option.transact(tx)
+          } else {
+            selectPackByCode(code).option.transact(tx)
+          }
+        })
     }
 
     def registerCmd(req: CommandReq): F[Unit] = {
@@ -88,6 +94,12 @@ object Repo {
     insert into block(code, pack_code)
     values(${block.code}, ${pack.code})
   """.update
+
+  private
+  def selectPackByCode(code: String) =
+    fr"""
+    select code from pack where code = $code
+  """.query[String]
 
   private
   def selectPackByBlockCode(blockCode: String) =

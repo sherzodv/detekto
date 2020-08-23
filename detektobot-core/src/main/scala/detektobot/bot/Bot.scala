@@ -96,13 +96,15 @@ class Bot[F[_]: Api: ConcurrentEffect: Timer: LogIO](
               sendMessage(
                 ChatIntId(msg.chat.id),
                 s"""
-                   |Блок не найден в базе: $code
+                   |✅
+                   |Код не найден в базе: $code
                    |""".stripMargin
               ).exec.void
             )(packCode => sendMessage(
               ChatIntId(msg.chat.id),
               s"""
-                 |Блок найден: $code
+                 |⚠️⛔️⚠️
+                 |Код обнаружен в базе: $code
                  |Пакет: $packCode
                  |""".stripMargin
             ).exec.void)
