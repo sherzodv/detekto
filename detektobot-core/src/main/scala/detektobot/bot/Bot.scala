@@ -80,7 +80,11 @@ class Bot[F[_]: Api: ConcurrentEffect: Timer: LogIO](
       text          = msg.text,
       fileId        = "",
       fileUniqueId  = "",
-      code          = Some(cmd),
+      code          = Some(
+                        cmd
+                          .replaceAll(" ", "")
+                          .replaceAll("\\p{C}", "")
+                      ),
       error         = None,
     )
     dmCodeRepo.registerCmd(defaultReq) *> (
