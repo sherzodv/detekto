@@ -5,6 +5,7 @@ import telegramium.bots.high.implicits._
 import telegramium.bots.high.{Api, LongPollBot}
 import java.io.InputStream
 
+import cats.syntax.option._
 import cats.syntax.apply._
 import cats.syntax.functor._
 import cats.syntax.flatMap._
@@ -40,6 +41,32 @@ class Bot[F[_]: Api: ConcurrentEffect: Timer: LogIO](
         msg.document.fold(F.unit)(onPack(_, msg))
   }
 
+  private def execCmd(cmd: String, msg: Message, user: User): F[Unit] = {
+    cmd match {
+      case "/stat" => {
+        for {
+          byUsers <- dmCodeRepo.statByUsers()
+          total   <- dmCodeRepo.totalStat()
+          rep = byUsers.map{ stat =>
+            s"""*${stat.firstName} ${stat.lastName}*
+               |`Проверено: ${stat.checkCount}`
+               |`x Блоков : ${stat.blockHits}`
+               |`x Паков  : ${stat.packHits}`
+               |""".stripMargin
+          }.mkString("\n") +
+            s"""
+               |*Всего*
+               |`Проверено: ${total.checkCount}`
+               |`x Блоков : ${total.blockHits}`
+               |`x Паков  : ${total.packHits}`
+               |""".stripMargin
+          _ <- sendMessage(ChatIntId(msg.chat.id), rep, Markdown.some).exec.void
+        } yield ()
+      }
+      case x => sendMessage(ChatIntId(msg.chat.id), s"Неопознанная команда: $x").exec.void
+    }
+  }
+
   private def onPack(doc: Document, msg: Message): F[Unit] = {
     val notice = log.error("Принят файл от неавторизованного пользователя")
     msg.from.fold(notice) { user =>
@@ -70,6 +97,13 @@ class Bot[F[_]: Api: ConcurrentEffect: Timer: LogIO](
     }
   }
 
+  private def wrongMsg(msg: Message): F[Unit] = {
+    sendMessage(
+      ChatIntId(msg.chat.id),
+      "Неверный формат кода",
+    ).exec.void
+  }
+
   private def onCommand(cmd: String, msg: Message): F[Unit] = {
     val defaultReq = mkCommandReq(cmd, msg)
     val checkCodeReq = DmCodeCheckReq(
@@ -82,6 +116,7 @@ class Bot[F[_]: Api: ConcurrentEffect: Timer: LogIO](
       fileUniqueId  = "",
       code          = Some(
                         cmd
+                          .replaceAll("[^0-9A-Za-z]+", "")
                           .replaceAll(" ", "")
                           .replaceAll("\\p{C}", "")
                       ),
@@ -89,10 +124,13 @@ class Bot[F[_]: Api: ConcurrentEffect: Timer: LogIO](
     )
     dmCodeRepo.registerCmd(defaultReq) *> (
       if (cmd.startsWith("/") || cmd.length < 40) {
-        sendMessage(
-          ChatIntId(msg.chat.id),
-          "Неверный формат кода",
-        ).exec.void
+        msg.from.fold(wrongMsg(msg)){ user =>
+          if (conf.admin.admins.contains(user.id)) {
+            execCmd(cmd, msg, user)
+          } else {
+            wrongMsg(msg)
+          }
+        }
       } else {
         dmCodeRepo.checkDmCode(checkCodeReq).map(x => (x, cmd))
           .flatMap{ case (checkResult, code) =>

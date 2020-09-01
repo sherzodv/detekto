@@ -5,7 +5,7 @@ import cats.syntax.apply._
 import cats.syntax.functor._
 import cats.syntax.traverse._
 import cats.instances.list._
-import detektobot.adt.{Block, CommandReq, DmCodeCheckReq, Pack}
+import detektobot.adt.{Block, CommandReq, DmCodeCheckReq, Pack, StatByUser, TotalStat}
 import detektobot.config.Conf
 import doobie.Transactor
 import doobie.implicits._
@@ -17,6 +17,8 @@ object Repo {
     def checkDmCode(req: DmCodeCheckReq): F[Option[String]]
     def registerCmd(req: CommandReq): F[Unit]
     def registerPack(pack: Pack): F[Int]
+    def statByUsers(): F[List[StatByUser]]
+    def totalStat(): F[TotalStat]
   }
 
   def createRepo[F[_] : ConcurrentEffect : LogIO](tx: Transactor[F], conf: Conf): Resource[F, Service[F]] =
@@ -50,6 +52,17 @@ object Repo {
           .map(_ => pack.blocks.size)
     }
 
+    def statByUsers(): F[List[StatByUser]] = {
+      statByUsersSql
+        .to[List]
+        .transact(tx)
+    }
+
+    def totalStat(): F[TotalStat] = {
+      totalStatSql
+        .unique
+        .transact(tx)
+    }
   }
 
   private
@@ -107,4 +120,53 @@ object Repo {
     select pack_code from block where code = $blockCode
   """.query[String]
 
+  private
+  def totalStatSql =
+    sql"""
+      select
+        d.check_cnt,
+        d.block_cnt,
+        d.pack_cnt
+      from (
+        select
+          count(distinct d.code) as check_cnt,
+          count(distinct block.code) as block_cnt,
+          count(distinct pack.code) as pack_cnt
+        from
+          dm_code_check_req d
+          left join block on block.code = d.code
+          left join pack on pack.code = d.code
+        where
+          length(d.code) > 35
+          or length(d.code) < 50
+      ) d
+    """.query[TotalStat]
+
+  private
+  def statByUsersSql =
+    sql"""
+      select
+        d.user_id,
+        d.check_cnt,
+        d.block_cnt,
+        d.pack_cnt,
+        (select coalesce(first_name, '') from dm_code_check_req where user_id = d.user_id limit 1) as first_name,
+        (select coalesce(last_name, '') from dm_code_check_req where user_id = d.user_id limit 1) as last_name
+      from (
+        select
+          d.user_id,
+          count(distinct d.code) as check_cnt,
+          count(distinct block.code) as block_cnt,
+          count(distinct pack.code) as pack_cnt
+        from
+          dm_code_check_req d
+          left join block on block.code = d.code
+          left join pack on pack.code = d.code
+        where
+          length(d.code) > 35
+          or length(d.code) < 50
+        group by
+          d.user_id
+      ) d
+    """.query[StatByUser]
 }
