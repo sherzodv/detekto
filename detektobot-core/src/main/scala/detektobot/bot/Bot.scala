@@ -51,14 +51,14 @@ class Bot[F[_]: Api: ConcurrentEffect: Timer: LogIO](
             s"""*${stat.firstName} ${stat.lastName}*
                |`Проверено: ${stat.checkCount}`
                |`x Блоков : ${stat.blockHits}`
-               |`x Паков  : ${stat.packHits}`
+               |`x Коробок: ${stat.packHits}`
                |""".stripMargin
           }.mkString("\n") +
             s"""
                |*Всего*
                |`Проверено: ${total.checkCount}`
                |`x Блоков : ${total.blockHits}`
-               |`x Паков  : ${total.packHits}`
+               |`x Коробок: ${total.packHits}`
                |""".stripMargin
           _ <- sendMessage(ChatIntId(msg.chat.id), rep, Markdown.some).exec.void
         } yield ()
