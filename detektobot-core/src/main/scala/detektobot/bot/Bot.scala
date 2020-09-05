@@ -3,7 +3,7 @@ package bot
 
 import telegramium.bots.high.implicits._
 import telegramium.bots.high.{Api, LongPollBot}
-import java.io.InputStream
+import java.io.{FileOutputStream, InputStream}
 
 import cats.syntax.option._
 import cats.syntax.apply._
@@ -16,13 +16,15 @@ import com.google.zxing.{BarcodeFormat, BinaryBitmap, DecodeHintType}
 import com.google.zxing.client.j2se.{BufferedImageLuminanceSource, MatrixToImageWriter}
 import com.google.zxing.common.GlobalHistogramBinarizer
 import com.google.zxing.datamatrix.DataMatrixReader
-import detektobot.adt.{Block, CommandReq, DmCodeCheckReq, Pack}
+import detektobot.adt.{Block, CommandReq, DmCodeCheckReq, FoundCode, Pack}
 import detektobot.config.Conf
 import detektobot.db.Repo
 import fs2.io.toInputStream
 import javax.imageio.ImageIO
 import logstage.LogIO
 import logstage.LogIO.log
+import org.apache.poi.ss.usermodel.{BorderStyle, HorizontalAlignment}
+import org.apache.poi.xssf.usermodel.XSSFWorkbook
 import org.http4s.client.Client
 
 class Bot[F[_]: Api: ConcurrentEffect: Timer: LogIO](
@@ -63,6 +65,8 @@ class Bot[F[_]: Api: ConcurrentEffect: Timer: LogIO](
           _ <- sendMessage(ChatIntId(msg.chat.id), rep, Markdown.some).exec.void
         } yield ()
       }
+      case "/tsv" => sendFound(ChatIntId(msg.chat.id))
+      case "/excel" => sendFoundExcel(ChatIntId(msg.chat.id))
       case x => sendMessage(ChatIntId(msg.chat.id), s"Неопознанная команда: $x").exec.void
     }
   }
@@ -106,6 +110,10 @@ class Bot[F[_]: Api: ConcurrentEffect: Timer: LogIO](
 
   private def onCommand(cmd: String, msg: Message): F[Unit] = {
     val defaultReq = mkCommandReq(cmd, msg)
+    val codeRaw = cmd
+      .replaceAll("[^0-9A-Za-z]+", "")
+      .replaceAll(" ", "")
+      .replaceAll("\\p{C}", "")
     val checkCodeReq = DmCodeCheckReq(
       userId        = msg.from.map(_.id).getOrElse(-1),
       userName      = msg.from.flatMap(_.username),
@@ -114,12 +122,7 @@ class Bot[F[_]: Api: ConcurrentEffect: Timer: LogIO](
       text          = msg.text,
       fileId        = "",
       fileUniqueId  = "",
-      code          = Some(
-                        cmd
-                          .replaceAll("[^0-9A-Za-z]+", "")
-                          .replaceAll(" ", "")
-                          .replaceAll("\\p{C}", "")
-                      ),
+      code          = Some(codeRaw),
       error         = None,
     )
     dmCodeRepo.registerCmd(defaultReq) *> (
@@ -132,7 +135,7 @@ class Bot[F[_]: Api: ConcurrentEffect: Timer: LogIO](
           }
         }
       } else {
-        dmCodeRepo.checkDmCode(checkCodeReq).map(x => (x, cmd))
+        dmCodeRepo.checkDmCode(checkCodeReq).map(x => (x, codeRaw))
           .flatMap{ case (checkResult, code) =>
             checkResult.fold(
               sendMessage(
@@ -186,6 +189,25 @@ class Bot[F[_]: Api: ConcurrentEffect: Timer: LogIO](
               "Не удалось распознать код. Пожалуйста, убедитесь что код в самом центре изображения."
             ).exec.void
       }
+  }
+
+  private def sendFound(chatId: ChatId): F[Unit] = {
+    for {
+      blocks <- dmCodeRepo.foundBlocks()
+      packs  <- dmCodeRepo.foundPacks()
+      _      <- exportFoundToTsv(blocks, packs)
+      _      <- sendDocument(chatId, InputPartFile(new java.io.File("/tmp/blocks.tsv"))).exec.void
+      _      <- sendDocument(chatId, InputPartFile(new java.io.File("/tmp/korobs.tsv"))).exec.void
+    } yield ()
+  }
+
+  private def sendFoundExcel(chatId: ChatId): F[Unit] = {
+    for {
+      blocks <- dmCodeRepo.foundBlocks()
+      packs  <- dmCodeRepo.foundPacks()
+      _      <- F.delay(createWorkbook(blocks, packs, "/tmp/found.xlsx"))
+      _      <- sendDocument(chatId, InputPartFile(new java.io.File("/tmp/found.xlsx"))).exec.void
+    } yield ()
   }
 
   private def mkCommandReq(text: String, msg: Message): CommandReq = {
@@ -256,6 +278,88 @@ class Bot[F[_]: Api: ConcurrentEffect: Timer: LogIO](
     hints.put(DecodeHintType.POSSIBLE_FORMATS, List(BarcodeFormat.DATA_MATRIX).asJava)
     val res = (new DataMatrixReader).decode(bin, hints)
     res.getText
+  }
+
+  private def exportFoundToTsv(blocks: List[FoundCode], packs: List[FoundCode]): F[Unit] = F.delay {
+    import java.io._
+    val (blocksTsv, packsTsv) = mkTsv(blocks, packs)
+    val bw = new PrintWriter(new File("/tmp/blocks.tsv"))
+    val pw = new PrintWriter(new File("/tmp/korobs.tsv"))
+    bw.write(blocksTsv)
+    pw.write(packsTsv)
+    bw.close()
+    pw.close()
+  }
+
+  private def mkTsv(blocks: List[FoundCode], packs: List[FoundCode]): (String, String) = {
+    val blocksTsv = "Код\tНашёл\tДата\n" + blocks
+      .map(x => s"${x.code}\t${x.firstName} ${x.lastName}\t${x.foundAt}")
+      .mkString("\n")
+    val packsTsv = "Код\tНашёл\tДата\n" + packs
+      .map(x => s"${x.code}\t${x.firstName} ${x.lastName}\t${x.foundAt}")
+      .mkString("\n")
+    (blocksTsv, packsTsv)
+  }
+
+  def createSheet(title: String, items: List[FoundCode], workbook: XSSFWorkbook) = {
+    val font = workbook.createFont()
+    font.setFontName("Arial")
+    font.setFontHeightInPoints(12)
+    font.setBold(true)
+
+    val hStyle = workbook.createCellStyle()
+    hStyle.setFont(font)
+    hStyle.setAlignment(HorizontalAlignment.CENTER)
+    hStyle.setBorderTop(BorderStyle.THIN)
+    hStyle.setBorderLeft(BorderStyle.THIN)
+    hStyle.setBorderRight(BorderStyle.THIN)
+    hStyle.setBorderBottom(BorderStyle.THIN)
+
+    val cStyle = workbook.createCellStyle()
+    cStyle.setWrapText(false)
+    cStyle.setBorderTop(BorderStyle.THIN)
+    cStyle.setBorderLeft(BorderStyle.THIN)
+    cStyle.setBorderRight(BorderStyle.THIN)
+    cStyle.setBorderBottom(BorderStyle.THIN)
+
+    val sheet = workbook.createSheet(title)
+    sheet.setColumnWidth(0, 256 * 50)
+    sheet.setColumnWidth(1, 256 * 20)
+    sheet.setColumnWidth(2, 256 * 30)
+
+    val header = sheet.createRow(0)
+
+    List("Код", "Нашёл", "Дата").zipWithIndex.foreach { case (t, idx) =>
+      val hcell = header.createCell(idx)
+      hcell.setCellValue(t)
+      hcell.setCellStyle(hStyle)
+    }
+
+    items.zipWithIndex.foreach { case (item, idx) =>
+      val row = sheet.createRow(idx + 1)
+
+      val codeCell = row.createCell(0)
+      codeCell.setCellValue(item.code)
+      codeCell.setCellStyle(cStyle)
+
+      val foundByCell = row.createCell(1)
+      foundByCell.setCellValue(item.firstName + " " + item.lastName)
+      foundByCell.setCellStyle(cStyle)
+
+      val foundAtCell = row.createCell(2)
+      foundAtCell.setCellValue(item.foundAt)
+      foundAtCell.setCellStyle(cStyle)
+    }
+
+  }
+
+  def createWorkbook(blocks: List[FoundCode], packs: List[FoundCode], file: String): Unit = {
+    val workbook = new XSSFWorkbook()
+    createSheet("Блоки", blocks, workbook)
+    createSheet("Коробки", packs, workbook)
+    val out = new FileOutputStream(file)
+    workbook.write(out)
+    workbook.close()
   }
 
 }

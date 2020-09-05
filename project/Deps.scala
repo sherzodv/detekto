@@ -26,6 +26,7 @@ object Deps {
     val tsec           = "0.2.1"
     val telegramium    = "2.49.0"
     val zxing          = "3.4.0"
+    val apachePoi      = "3.15"
   }
 
   object Lib {
@@ -75,6 +76,9 @@ object Deps {
     val tsecJwtSig     = tsec("jwt-sig")
     val tsecHttp4s     = tsec("http4s")
 
+    val apachePoi      = "org.apache.poi" % "poi" % V.apachePoi
+    val apachePoiOoxml = "org.apache.poi" % "poi-ooxml" % V.apachePoi
+
     val telegramiumCore = "io.github.apimorphism" %% "telegramium-core" % V.telegramium
     val telegramiumHigh = "io.github.apimorphism" %% "telegramium-high" % V.telegramium
 
@@ -111,6 +115,9 @@ object Deps {
     Lib.tsecJwtMac,
     Lib.tsecJwtSig,
     Lib.tsecHttp4s,
+
+    Lib.apachePoi,
+    Lib.apachePoiOoxml,
 
     Lib.telegramiumCore,
     Lib.telegramiumHigh,

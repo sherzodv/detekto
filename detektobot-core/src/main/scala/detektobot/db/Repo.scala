@@ -5,9 +5,9 @@ import cats.syntax.apply._
 import cats.syntax.functor._
 import cats.syntax.traverse._
 import cats.instances.list._
-import detektobot.adt.{Block, CommandReq, DmCodeCheckReq, Pack, StatByUser, TotalStat}
+import detektobot.adt.{Block, CommandReq, DmCodeCheckReq, FoundCode, Pack, StatByUser, TotalStat}
 import detektobot.config.Conf
-import doobie.Transactor
+import doobie.{Query0, Transactor}
 import doobie.implicits._
 import logstage.LogIO
 
@@ -19,6 +19,8 @@ object Repo {
     def registerPack(pack: Pack): F[Int]
     def statByUsers(): F[List[StatByUser]]
     def totalStat(): F[TotalStat]
+    def foundBlocks(): F[List[FoundCode]]
+    def foundPacks(): F[List[FoundCode]]
   }
 
   def createRepo[F[_] : ConcurrentEffect : LogIO](tx: Transactor[F], conf: Conf): Resource[F, Service[F]] =
@@ -61,6 +63,18 @@ object Repo {
     def totalStat(): F[TotalStat] = {
       totalStatSql
         .unique
+        .transact(tx)
+    }
+
+    override def foundBlocks(): F[List[FoundCode]] = {
+      foundBlocksSql
+        .to[List]
+        .transact(tx)
+    }
+
+    override def foundPacks(): F[List[FoundCode]] = {
+      foundPacksSql
+        .to[List]
         .transact(tx)
     }
   }
@@ -169,4 +183,40 @@ object Repo {
           d.user_id
       ) d
     """.query[StatByUser]
+
+  private
+  val foundBlocksSql =
+    fr"""
+      select distinct on(user_id, code)
+        d.user_id                   as userId,
+        d.code                      as code,
+        coalesce(d.first_name, '')  as firstName,
+        coalesce(d.last_name, '')   as lastName,
+        d.received_at               as foundAt
+      from
+        dm_code_check_req d
+        left join block on block.code = d.code
+        left join pack on pack.code = d.code
+      where
+        length(d.code) > 40 and length(d.code) < 50
+        and block.code is not null
+    """.query[FoundCode]
+
+  private
+  val foundPacksSql =
+    fr"""
+      select distinct on(user_id, code)
+        d.user_id                   as userId,
+        d.code                      as code,
+        coalesce(d.first_name, '')  as firstName,
+        coalesce(d.last_name, '')   as lastName,
+        d.received_at               as foundAt
+      from
+        dm_code_check_req d
+        left join block on block.code = d.code
+        left join pack on pack.code = d.code
+      where
+        length(d.code) > 40 and length(d.code) < 50
+        and pack.code is not null
+    """.query[FoundCode]
 }
